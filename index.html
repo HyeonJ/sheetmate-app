@@ -104,12 +104,12 @@
   const TOKEN = params.get('t') || '';
   let PIN = '';
   // text/plain 단순 요청 + 쿠키 없음 → 구글 다계정 버그 영향 없음
-  function call(action, payload) {
+  let call = function (action, payload) {
     return fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ token: TOKEN, pin: PIN, action: action, payload: payload || null }) })
       .then(r => { if (!r.ok) throw new Error('서버 연결 실패 (' + r.status + ')'); return r.json(); })
       .then(r => { if (r && r.ok === false) throw new Error(r.message); return r && r.data; });
-  }
+  };
   function unlock() {
     PIN = el('pin').value.trim();
     el('gateMsg').textContent = '확인 중…'; el('gateMsg').className = 'msg ok';
@@ -212,8 +212,34 @@
   }
 
   el('chips').innerHTML = VARS.map(v => '<span class="chip" onclick="insertVar(\'' + v + '\')">' + v.slice(2, -1) + '</span>').join('');
+
+  // 공개 체험 모드(#demo=1): 서버 없이 가짜 데이터로 화면만 보여준다(포트폴리오·크몽 미리보기용)
+  if (params.get('demo') === '1') {
+    const tomorrow = new Date(Date.now() + 9 * 3600e3 + 864e5);
+    const wd = ['일','월','화','수','목','금','토'][tomorrow.getUTCDay()];
+    const dateText = (tomorrow.getUTCMonth() + 1) + '월 ' + tomorrow.getUTCDate() + '일(' + wd + ')';
+    let demo = {
+      settings: { shopName: '데모 꽃집', sendHour: 20, template: '[#{가게명}] #{고객명}님, 주문하신 #{상품명}은(는) #{날짜}에 받아보실 수 있어요. 감사합니다!', ownerEmail: '', mode: 'DEMO' },
+      today: { tomorrowCount: 7, pendingTomorrow: 5, needsCall: [{ name: '정하은', phone: '010-****-3912', date: '내일' }] },
+      sample: { '#{가게명}': '데모 꽃집', '#{고객명}': '김예준', '#{상품명}': '장미 꽃다발', '#{수량}': '1', '#{금액}': '39,000', '#{날짜}': dateText, '#{주문번호}': '2026112510000' },
+    };
+    call = function (action, payload) {
+      return new Promise(resolve => setTimeout(() => {
+        if (action === 'save') demo.settings = Object.assign({}, demo.settings, payload, { mode: payload.mode === '실제' ? 'LIVE' : 'DEMO' });
+        if (action === 'send') { demo.today.pendingTomorrow = 0; }
+        if (action === 'sync') { demo.today.tomorrowCount += 1; demo.today.pendingTomorrow += 1; }
+        if (action === 'import') { const n = payload.rows.filter(r => r.some(c => String(c).trim())).length; resolve({ imported: n, errors: [], missingColumns: [], data: demo }); return; }
+        resolve(demo);
+      }, 300));
+    };
+    el('gate').style.display = 'none'; el('main').style.display = 'block';
+    document.title = '주문 알림 · 체험';
+    el('main').insertAdjacentHTML('afterbegin', '<div style="background:#fff8e1;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px">🧪 체험 모드 — 가짜 데이터라 저장·발송이 실제로 일어나지 않아요</div>');
+    call('data').then(fill);
+  } else {
   if (!params.get('s') || !TOKEN) { el('gateMsg').textContent = '링크가 올바르지 않아요. 시트의 «관리 화면 링크»에서 받은 주소로 열어주세요.'; el('gateMsg').className = 'msg bad'; }
   el('pin').focus();
+  }
 </script>
 </body>
 </html>
