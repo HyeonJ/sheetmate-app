@@ -34,7 +34,12 @@
   button:disabled { opacity: .5; cursor: default; }
   .msg { margin-top: 10px; min-height: 18px; }
   .msg.ok { color: var(--ok); } .msg.bad { color: var(--bad); }
+  .upload { border: 2px dashed #c9d3df; border-radius: 8px; padding: 14px; text-align: center; margin-top: 8px; }
+  .upload input { display: none; }
+  .upload label { display: inline-block; margin: 0; background: var(--navy); color: #fff; padding: 9px 14px; border-radius: 6px; cursor: pointer; }
+  .errs { color: var(--bad); font-size: 12px; margin-top: 6px; text-align: left; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
   <div id="gate">
@@ -57,6 +62,15 @@
   <div class="row">
     <button class="ghost" onclick="run('sync', '주문을 가져왔어요')">지금 주문 가져오기</button>
     <button class="ghost" onclick="run('send', '내일 알림을 보냈어요')">지금 알림 보내기</button>
+  </div>
+
+  <h3>주문 엑셀 올리기</h3>
+  <div class="upload">
+    <div style="color:#666;margin-bottom:8px">스마트스토어에서 받은 주문 엑셀(.xlsx · .csv)을 올려주세요</div>
+    <label for="file">파일 선택</label>
+    <input id="file" type="file" accept=".xlsx,.xls,.csv" onchange="upload(this.files[0])">
+    <div class="msg" id="upMsg"></div>
+    <div class="errs" id="upErrs"></div>
   </div>
 
   <h3>설정</h3>
@@ -156,6 +170,41 @@
   function run(fn, done) {
     say('실행 중…', true);
     call(fn).then(d => { say(done + ' ✅', true); fill(d); }).catch(e => say(e.message, false));
+  }
+
+  function upload(file) {
+    if (!file) return;
+    const msg = el('upMsg'), errs = el('upErrs');
+    errs.innerHTML = ''; msg.textContent = '읽는 중…'; msg.className = 'msg ok';
+    const reader = new FileReader();
+    reader.onload = () => {
+      let header, rows;
+      try {
+        const wb = XLSX.read(new Uint8Array(reader.result), { type: 'array', cellDates: false, raw: false });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const table = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+        // 맨 위에 안내 문구 줄이 있는 양식도 있어서, «주문번호»가 들어간 첫 줄을 헤더로 본다
+        const h = table.findIndex(r => r.some(c => String(c).replace(/\s/g, '').indexOf('주문번호') >= 0));
+        if (h < 0) throw new Error('«주문번호» 열을 찾지 못했어요. 주문 엑셀이 맞는지 확인해주세요.');
+        header = table[h].map(String); rows = table.slice(h + 1).map(r => r.map(String));
+      } catch (e) {
+        const text = String(e && e.message || e);
+        msg.className = 'msg bad';
+        msg.textContent = /password|encrypt|암호/i.test(text)
+          ? '비밀번호가 걸린 파일이에요. 엑셀에서 열고 «다른 이름으로 저장 → 도구 → 일반 옵션»에서 암호를 지운 뒤 올려주세요.'
+          : text;
+        return;
+      }
+      msg.textContent = rows.length + '줄 올리는 중…';
+      call('import', { header: header, rows: rows }).then(r => {
+        msg.textContent = '주문 ' + r.imported + '건을 반영했어요 ✅';
+        if (r.missingColumns && r.missingColumns.length) { msg.className = 'msg bad'; msg.textContent = '필수 열이 없어요: ' + r.missingColumns.join(', '); }
+        errs.innerHTML = (r.errors || []).slice(0, 10).map(x => x.row + '번째 줄: ' + x.message).join('<br>') + ((r.errors || []).length > 10 ? '<br>…외 ' + (r.errors.length - 10) + '줄' : '');
+        fill(r.data);
+      }).catch(e => { msg.className = 'msg bad'; msg.textContent = e.message; });
+      el('file').value = '';
+    };
+    reader.readAsArrayBuffer(file);
   }
 
   function load() {
